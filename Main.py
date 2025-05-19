@@ -1,65 +1,54 @@
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+import os
+import telebot
 import requests
+import re
 
-# Telegram Bot token
-telegram_token = 'YOUR_TELEGRAM_BOT_TOKEN'
+# خپل ټوکن دلته له Environment Variables څخه واخلئ
+TOKEN = os.getenv('API_TOKEN')
 
-# Only allow your own Telegram ID
-allowed_user_id = YOUR_TELEGRAM_USER_ID
+# که ټوکن نه وي تنظیم شوی، خطا ښکاره کړئ
+if not TOKEN:
+    raise ValueError("API_TOKEN نه دی تنظیم شوی!")
 
-# Binance API URL
-BINANCE_API_URL = "https://api.binance.com/api/v3/ticker/price"
+# ټوکن چاپ کړئ (یوازې د ډیباګ لپاره، وروسته یې لرې کړئ)
+print(f"TOKEN: {TOKEN}")
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if update.effective_user.id != allowed_user_id:
-        await update.message.reply_text("You are not authorized to use this bot.")
-        return
-    
-    welcome_message = (
-        "ښه راغلاست! د کرنسي قیمت لپاره وپوښته، لکه: /price BTCUSDT یا /price ETHUSDT\n\n"
-        "د استفادې لارښود:\n"
-        "/price [TICKER] - د کرنسي قیمت وښياست لکه BTCUSDT"
-    )
-    await update.message.reply_text(welcome_message)
+# ټیلیګرام بوټ جوړ کړئ
+bot = telebot.TeleBot(TOKEN)
 
-async def get_price(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if update.effective_user.id != allowed_user_id:
-        await update.message.reply_text("You are not authorized to use this bot.")
-        return
-    
-    if not context.args:
-        await update.message.reply_text("مهرباني وکړئ د کرنسي سمبول وښياست لکه: /price BTCUSDT")
-        return
-    
-    symbol = context.args[0].upper()
-    
+# د قیمت ترلاسه کولو فنکشن
+def get_price(symbol):
     try:
-        response = requests.get(f"{BINANCE_API_URL}?symbol={symbol}")
+        url = f"https://api.binance.com/api/v3/ticker/price?symbol={symbol.upper()}"
+        response = requests.get(url, timeout=10)  # د 10 ثانیو ټایم آوټ
+        response.raise_for_status()  # د HTTP تېروتنو کنټرول
         data = response.json()
-        
         if 'price' in data:
-            price = float(data['price'])
-            formatted_price = "{:,.2f}".format(price)
-            await update.message.reply_text(f"د {symbol} قیمت: {formatted_price}$")
+            return f"د {symbol.upper()} اوسنی قیمت: ${float(data['price']):,.2f} USDT"
         else:
-            await update.message.reply_text(f"د {symbol} معلومات ونه موندل شول. مهرباني وکړئ سمبول تایید کړئ.")
-    
+            return f"بخښنه غواړم، {symbol.upper()} ونه موندل شو."
+    except requests.exceptions.RequestException:
+        return "بخښنه غواړم، د Binance API ته لاسرسی نشته."
     except Exception as e:
-        await update.message.reply_text(f"ستونزه پيدا شوه: {str(e)}")
+        return f"تېروتنه: {e}"
 
-def main() -> None:
-    application = ApplicationBuilder().token(telegram_token).build()
-    
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("price", get_price))
-    
-    print("Bot is running...")
-    application.run_polling()
+# د هر ډول پیغام هندل کول
+@bot.message_handler(func=lambda message: True)
+def handle_message(message):
+    text = message.text.upper()
+    # د کرنسي نوم پیدا کول (لکه BTCUSDT)
+    match = re.fullmatch(r'[A-Z]{3,5}USDT', text)
+    if match:
+        symbol = match.group(0)
+        price = get_price(symbol)
+        bot.reply_to(message, price)
+    else:
+        bot.reply_to(message, "مهرباني وکړئ د کرنسي سم نوم ولیکئ، لکه BTCUSDT یا ETHUSDT")
 
+# بوټ چالان کړئ
 if __name__ == "__main__":
     try:
-        main()
+        bot.polling(timeout=60, long_polling_timeout=60)
     except Exception as e:
         print(f"Bot Error: {e}")
-        print("بوت ونه چلېد. مهرباني وکړئ ټوکن یا کوډ وګورئ")
+        print("بوت ونه چلېد. مهرباني وکړئ ټوکن یا کوډ وګورئ.")
